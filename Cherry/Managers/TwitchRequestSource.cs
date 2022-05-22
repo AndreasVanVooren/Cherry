@@ -1,7 +1,7 @@
-﻿using ChatCore;
-using ChatCore.Interfaces;
-using ChatCore.Models.Twitch;
-using ChatCore.Services;
+﻿using CatCore;
+using CatCore.Models.Twitch;
+using CatCore.Models.Twitch.IRC;
+using CatCore.Services.Twitch.Interfaces;
 using Cherry.Interfaces;
 using Cherry.Models;
 using SiraUtil.Logging;
@@ -20,49 +20,26 @@ namespace Cherry.Managers
 
         private readonly Config _config;
         private readonly SiraLog _siraLog;
-        private readonly ChatCoreInstance _chatCoreInstance;
+        private readonly CatCoreInstance _chatCoreInstance;
         private readonly Dictionary<string, RequestEventArgs> _lazyTinyRequestCache = new Dictionary<string, RequestEventArgs>();
-        private ChatServiceMultiplexer? _twitchService;
+        private ITwitchService? _twitchService;
 
-        public TwitchRequestSource(Config config, SiraLog siraLog, UBinder<Plugin, ChatCoreInstance> chatCoreInstance)
+        public TwitchRequestSource(Config config, SiraLog siraLog, UBinder<Plugin, CatCoreInstance> chatCoreInstance)
         {
             _config = config;
             _siraLog = siraLog;
             _chatCoreInstance = chatCoreInstance.Value;
         }
 
-        private static int _awaitingLogins = 0;
-
         public async Task Run()
         {
-            _twitchService = _chatCoreInstance.RunAllServices();
-            _twitchService.OnLogin += OnLoginReceived;
+            _twitchService = _chatCoreInstance.RunTwitchServices();
             _twitchService.OnTextMessageReceived += ChatMessageReceived;
-
-            // TODO: Since this is a broken multiplexer, we need to iterate services.
-            if(_twitchService.GetTwitchService().LoggedInUser == null)
-            {
-                ++_awaitingLogins;
-            }
-
-            // NOTE: Not really the best code, but w/e
-            //_receivedLogin = _twitchService.LoggedIn
-            while (_awaitingLogins > 0)
-            {
-                //_receivedLogin = _twitchService.LoggedIn
+            while (!_twitchService.LoggedIn)
                 await Task.Yield();
-            }
         }
 
-        public void OnLoginReceived(IChatService service)
-        {
-            if(_twitchService != null && service == _twitchService.GetTwitchService())
-            {
-                --_awaitingLogins;
-            }
-        }
-
-        private void ChatMessageReceived(IChatService service, IChatMessage message)
+        private void ChatMessageReceived(ITwitchService service, TwitchMessage message)
         {
             if (message.Message.StartsWith(_config.RequestCommand))
             {
@@ -125,21 +102,21 @@ namespace Cherry.Managers
 
         public void SendMessage(object sender, string message)
         {
-            if (sender is IChatChannel channel)
+            if (sender is TwitchChannel channel)
             {
                 if (!_config.AddTwitchTTSPrefix)
-                    _twitchService?.SendTextMessage(message, channel);
+                    channel.SendMessage(message);
                 else
-                    _twitchService?.SendTextMessage($"! {message}", channel);
+                    channel?.SendMessage($"! {message}");
             }
         }
 
         private class TwitchSender : DynamicSender
         {
-            private readonly IChatChannel _channel;
+            private readonly TwitchChannel _channel;
             private readonly ICherryRequestSource _source;
 
-            public TwitchSender(IChatChannel channel, ICherryRequestSource source)
+            public TwitchSender(TwitchChannel channel, ICherryRequestSource source)
             {
                 _source = source;
                 _channel = channel;
